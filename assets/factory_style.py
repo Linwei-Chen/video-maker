@@ -370,3 +370,32 @@ def probe_duration(path):
 def grab_frame(video_mp4, t_sec, out_png):
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", str(t_sec), "-i", video_mp4,
                     "-frames:v", "1", out_png], check=True)
+
+def make_blindset(video_mp4, scene_bounds, out_dir, n_per_scene=2, seed=7,
+                  crop_bottom=0.15):
+    """生成盲测美感门的帧集：每幕避开首尾各 2s 抽 n 帧，并裁掉底部字幕条。
+
+    scene_bounds: [(幕名, 起始秒, 结束秒), ...]，与分镜表/meta.json 一致。
+    裁字幕是关键：字幕会把旁白语义白送给审稿人，让画面本身的空洞被文字掩盖。
+    把 out_dir 交给**不知视频主题**的独立 Agent 评审（规程见 reference/visual-and-engine.md §7）。
+    """
+    import imageio.v2 as imageio
+    os.makedirs(out_dir, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    total = probe_duration(video_mp4)
+    paths = []
+    for name, t0, t1 in scene_bounds:
+        t1 = min(t1, total)
+        lo, hi = t0 + 2.0, max(t0 + 2.5, t1 - 2.0)
+        if hi - lo < 0.5:                                   # 幕太短：只取幕中点
+            ts = [(t0 + t1) / 2]
+        else:
+            ts = sorted(rng.uniform(lo, hi, size=n_per_scene).tolist())
+        for k, t in enumerate(ts, 1):
+            p = os.path.join(out_dir, f"blind_{name}_{k}.png")
+            grab_frame(video_mp4, t, p)
+            img = imageio.imread(p)
+            imageio.imwrite(p, img[: int(img.shape[0] * (1 - crop_bottom))])
+            paths.append(p)
+    print(f"[blindset] {len(paths)} 帧 -> {out_dir}", flush=True)
+    return paths
